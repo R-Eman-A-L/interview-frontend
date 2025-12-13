@@ -1,23 +1,68 @@
-node_modules
+# ==============================
+#   NODE MODULES
+# ==============================
+node_modules/
 
-# Output
-.output
-.vercel
-.netlify
-.wrangler
-/.svelte-kit
-/build
+# ==============================
+#   BUILD OUTPUT
+# ==============================
+.svelte-kit/
+build/
+.output/
+.vercel/
+.netlify/
+.wrangler/
+dist/
 
-# OS
+# ==============================
+#   ENVIRONMENT FILES
+# ==============================
+.env
+.env.*        # all env variants
+!.env.example # allow templates
+!.env.test
+
+# ==============================
+#   OS FILES
+# ==============================
 .DS_Store
 Thumbs.db
 
-# Env
-.env
-.env.*
-!.env.example
-!.env.test
+# ==============================
+#   EDITOR / IDE
+# ==============================
+.vscode/
+.idea/
 
-# Vite
+# ==============================
+#   LOGS
+# ==============================
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==============================
+#   VITE TIMESTAMP FILES
+# ==============================
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# ==============================
+#   SVELTEKIT ADAPTER JUNK
+# ==============================
+.svelte-kit
+.server/
+
+# ==============================
+#   TYPESCRIPT
+# ==============================
+*.tsbuildinfo
+
+# ==============================
+#   TEMP / BACKUP FILES
+# ==============================
+*.swp
+*.swo
+*.tmp
+*.bak
