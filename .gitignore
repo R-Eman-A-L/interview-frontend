@@ -17,6 +17,10 @@ dist/
 # ==============================
 #   ENVIRONMENT FILES
 # ==============================
+
+# Env (explicit)
+.env.local
+
 .env
 .env.*        # all env variants
 !.env.example # allow templates
