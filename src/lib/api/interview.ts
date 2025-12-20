@@ -1,0 +1,57 @@
+import { fetchJson } from "./client";
+import type {
+    InterviewStartRequest,
+    InterviewStartResponse,
+    NextQuestionRequest,
+    NextQuestionResponse,
+    AnswerRequest,
+    AnswerResponse,
+    InterviewStatusRequest,
+    InterviewStatusResponse,
+    InterviewResultRequest,
+    InterviewResultResponse,
+    InterviewSummaryRequest,
+    InterviewSummaryResponse
+}from './types';
+
+export async function startInterview(req: InterviewStartRequest): Promise<InterviewStartResponse> {
+    return fetchJson<InterviewStartResponse>('/interview/start', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
+
+export async function NextQuestion(req:NextQuestionRequest): Promise<NextQuestionResponse> {
+    return fetchJson<NextQuestionResponse>('/interview/nextquestion', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
+
+export async function answerQuestion(req:AnswerRequest): Promise<AnswerResponse> {
+    return fetchJson<AnswerResponse>('/interview/answer', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
+
+export async function getInterviewStatus(req:InterviewStatusRequest): Promise<InterviewStatusResponse> {
+    return fetchJson<InterviewStatusResponse>('/interview/status', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
+
+export async function getInterviewResults(req:InterviewResultRequest): Promise<InterviewResultResponse> {
+    return fetchJson<InterviewResultResponse>('/interview/results', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
+
+export async function getInterviewSummary(req:InterviewSummaryRequest): Promise<InterviewSummaryResponse> {
+    return fetchJson<InterviewSummaryResponse>('/interview/summary', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
