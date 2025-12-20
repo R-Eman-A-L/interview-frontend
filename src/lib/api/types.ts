@@ -20,8 +20,7 @@ export interface InterviewStartResponse {
 
 export interface IngestPasteRequest {
     interview_id: UUID;
-    user_email: string;
-    pasted_texts: string;
+    pasted_texts: string[];
     job_description?: string | null;
 }
 

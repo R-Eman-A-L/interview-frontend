@@ -11,11 +11,20 @@ import type {
     InterviewResultRequest,
     InterviewResultResponse,
     InterviewSummaryRequest,
-    InterviewSummaryResponse
+    InterviewSummaryResponse,
+    GenerateQuestionsRequest,
+    GenerateQuestionsResponse
 }from './types';
 
 export async function startInterview(req: InterviewStartRequest): Promise<InterviewStartResponse> {
     return fetchJson<InterviewStartResponse>('/interview/start', {
+        method: 'POST',
+        body: JSON.stringify(req)
+    });
+}
+
+export async function generateQuestions(req:GenerateQuestionsRequest): Promise<GenerateQuestionsResponse> {
+    return fetchJson<GenerateQuestionsResponse>('/interview/question/generate', {
         method: 'POST',
         body: JSON.stringify(req)
     });
@@ -53,5 +62,12 @@ export async function getInterviewSummary(req:InterviewSummaryRequest): Promise<
     return fetchJson<InterviewSummaryResponse>('/interview/summary', {
         method: 'POST',
         body: JSON.stringify(req)
+    });
+}
+
+export async function getInterviewMetaData(inteeriview_id:string): Promise<{candidate_email: string}> {
+    return fetchJson<{candidate_email: string}>('/inter/meta', {
+        method: 'POST',
+        body: JSON.stringify({inteeriview_id})
     });
 }
