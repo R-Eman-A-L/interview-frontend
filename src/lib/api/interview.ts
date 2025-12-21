@@ -30,7 +30,7 @@ export async function generateQuestions(req:GenerateQuestionsRequest): Promise<G
     });
 }
 
-export async function NextQuestion(req:NextQuestionRequest): Promise<NextQuestionResponse> {
+export async function nextQuestion(req:NextQuestionRequest): Promise<NextQuestionResponse> {
     return fetchJson<NextQuestionResponse>('/interview/nextquestion', {
         method: 'POST',
         body: JSON.stringify(req)
