@@ -1,5 +1,6 @@
 <script lang="ts">
     import { page } from '$app/state'
+    import { goto } from '$app/navigation';
     import { nextQuestion, answerQuestion } from '$lib/api/interview';
     import type { NextQuestionResponse } from '$lib/api/types';
 
@@ -18,13 +19,33 @@
     let answeredText = '';
     let currentQuestion: number | null = null;
     let totalQuestions: number | null = null;
+    let redirecting = false;
+    let completed = false;
 
-    async function loadNextQuestion() {
+    function sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function loadNextQuestion(showLoading: boolean = true) {
+
+        if (redirecting) return;
+
         error = null;
         loading = true;
         
         try {
             nextQ = await nextQuestion({interview_id: interviewId});
+
+            if (nextQ.status === 'completed') {
+                redirecting = true;
+                completed = true;
+                currentQuestion = null;
+                totalQuestions = null;
+                await sleep(5000);
+                await goto(`/interview/${interviewId}/results`);
+                return;
+            }
+
             if (nextQ.status === 'in_progress') {
             const questionIndex = nextQ.index;
             if (questionIndex === null) {
@@ -75,7 +96,7 @@
             });
 
             answeredText = '';
-            await loadNextQuestion();
+            await loadNextQuestion(false);
         } catch (e: any) {
             error = e?.message ?? 'Failed to submit the answer.';
         } finally{
@@ -92,15 +113,16 @@
 <h1>Interview</h1>
 <p>Interview ID: {interviewId}</p>
 
-{#if loading}
+{#if completed}
+    <p>Interview completed. Redirecting you to the results page...</p>
+{:else if loading && !submitting}
     <p>Loading next question...</p>
 {:else if error}
     <p style="color:red;">{error}</p>
-{:else if nextQ?.status === 'completed'}
-    <p>No more questions.</p>
+<!-- {:else if nextQ?.status === 'completed'}
+    <p>Interview completed. Redirecting you to the results page...</p> -->
 {:else if nextQ?.status === 'in_progress'}
     <p><strong>Progress:</strong>Question {currentQuestion}/{totalQuestions}</p>
-    
     <p><strong>Type:</strong>{nextQ.type}</p>
     <p><strong>Question:</strong>{nextQ.question}</p>
 
