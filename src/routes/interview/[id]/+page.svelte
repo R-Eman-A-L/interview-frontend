@@ -3,6 +3,7 @@
     import { goto } from '$app/navigation';
     import { nextQuestion, answerQuestion } from '$lib/api/interview';
     import type { NextQuestionResponse } from '$lib/api/types';
+    import { onMount } from 'svelte';
 
     const interviewIdParm = page.params.id;
 
@@ -106,8 +107,9 @@
     }
 
     // make the function call immediately when the page is created.
-    void loadNextQuestion();
-
+    onMount(() =>{
+        loadNextQuestion();
+    })
 </script>
 
 <h1>Interview</h1>
