@@ -85,7 +85,7 @@
     {:else}
         {#each data.results as question (question.question_id)}
             <div style="border:1px solid #ddd; padding:12px; margin:12px 0; border-radius:8px">
-                <p><strong>Question {question.index + 1}</strong> — {question.type}</p>
+                <p><strong>Question {question.index}</strong> — {question.type}</p>
                 <p>{question.question}</p>
 
                 <p style="margin-top:10px;"><strong>Answer:</strong></p>
