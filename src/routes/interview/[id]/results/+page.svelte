@@ -63,7 +63,6 @@
 </script>
 
 <h1>Results</h1>
-<p>Interview ID: {interviewId}</p>
 
 {#if loading}
     <p>Loading results...</p>

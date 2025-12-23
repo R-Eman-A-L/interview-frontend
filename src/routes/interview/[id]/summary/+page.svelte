@@ -66,7 +66,6 @@
 </script>
 
 <h1>Final Summary</h1>
-<p>Interview ID: {interviewId}</p>
 
 {#if loading}
     <p>Loading summary...</p>

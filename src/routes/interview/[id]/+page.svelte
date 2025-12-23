@@ -113,7 +113,6 @@
 </script>
 
 <h1>Interview</h1>
-<p>Interview ID: {interviewId}</p>
 
 {#if completed}
     <p>Interview completed. Redirecting you to the results page...</p>

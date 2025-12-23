@@ -50,7 +50,6 @@
 </script>
 
 <h1>Add Context</h1>
-<p>Interview ID: {interviewId}</p>
 
 <p>
     Paste your resume, notes, company extra informations, or the job description below.
