@@ -74,7 +74,7 @@
             N/A
         {:else}
             {Math.round((data.avg_score / 5) * 100)}%
-            <span> (based on {data.answered_count}/{data.total_questions} graded questions)</span>  
+            <span> (based on {data.graded_answer_count}/{data.total_questions} graded questions)</span>  
         {/if}
     </p>
     
@@ -93,12 +93,13 @@
 
                 <p style="margin-top:10px;">
                     <strong>Score:</strong>
-                    {#if question.numeric_score === null}
+                    {#if question.grading_status !== 'graded'}
                         N/A
                     {:else}
                         {question.numeric_score}/5  
                     {/if}
-                    {#if question.label}
+
+                    {#if question.label && question.grading_status === 'graded'}
                         — <span style={labelStyle(question.label)}>{formatLabel(question.label)}</span>
                     {/if}
                 </p>
