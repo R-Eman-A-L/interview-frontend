@@ -136,8 +136,8 @@
         style="width:100%; max-width:800px;"
     ></textarea>
 
-    <div style="margin-top:16px;">
-        <button on:click={onSubmitAnswer} disabled={submitting}>
+    <div class="actions">
+        <button class="primary" on:click={onSubmitAnswer} disabled={submitting}>
             {#if submitting}
                 Submitting your answer...
             {:else}
@@ -148,3 +148,35 @@
 {:else}
     <p>Nothing to display.</p>
 {/if}
+
+
+<style>
+    .actions {
+        margin-top: 24px;
+        display: flex;
+        gap: 12px;
+        justify-content: flex-start;
+    }
+
+    button {
+        font-size: 14px;
+        padding: 10px 16px;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.15s ease, transform 0.05s ease;
+    }
+
+    button:active {
+        transform: translateY(1px);
+    }
+
+    .primary {
+        background-color: #2563eb;
+        color: white;
+    }
+
+    .primary:hover {
+        background-color: #1d4ed8;
+    }
+</style>

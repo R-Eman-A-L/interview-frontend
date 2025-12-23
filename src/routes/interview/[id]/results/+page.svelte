@@ -3,6 +3,7 @@
     import { onMount } from 'svelte';
     import { getInterviewResults } from '$lib/api/interview';
     import type { InterviewResultResponse } from '$lib/api/types';
+	import { goto } from '$app/navigation';
 
     const interviewIdParam = page.params.id;
 
@@ -36,6 +37,10 @@
             default:
                 return 'font-weight:700;';
         }
+    }
+
+    function gotoSummary() {
+        void goto(`/interview/${interviewId}/summary`);
     }
 
     async function loadResults() {
@@ -122,11 +127,41 @@
    <p>Nothing to display.</p>
 {/if}
 
-<div style="margin-top:16px;">
-    <a href={`/interview/${interviewId}/summary`}
-    style="display:inline-block; padding:10px 14px; border-radius:8px; border:1px solid #ddd; text-decoration:none;">
-    Continue to Summary
-    </a>
+<div class="actions">
+    <button class="primary" on:click={gotoSummary}>
+        Continue to Summary
+    </button>
 </div>
+
+<style>
+    .actions {
+        margin-top: 24px;
+        display: flex;
+        gap: 12px;
+        justify-content: flex-start;
+    }
+
+    button {
+        font-size: 14px;
+        padding: 10px 16px;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.15s ease, transform 0.05s ease;
+    }
+
+    button:active {
+        transform: translateY(1px);
+    }
+
+    .primary {
+        background-color: #2563eb;
+        color: white;
+    }
+
+    .primary:hover {
+        background-color: #1d4ed8;
+    }
+</style>
 
 

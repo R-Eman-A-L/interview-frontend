@@ -92,7 +92,7 @@
 
 <div class="actions">
     <button class="primary" on:click={gotoInterview}>
-        Try again
+        Create a new Interview
     </button>
     <button class="secondary" on:click={gotoResults}>
         Back to Results

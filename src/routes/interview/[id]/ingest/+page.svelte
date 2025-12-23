@@ -71,8 +71,8 @@
     style="width:100%; max-width:800px;"
 ></textarea>
 
-<div style="margin-top:16px;">
-    <button on:click={onGenerateQuestions} disabled={loading}>
+<div class="actions">
+    <button class="primary"  on:click={onGenerateQuestions} disabled={loading}>
         {#if loading}
             Preparing interview...
         {:else}
@@ -84,3 +84,34 @@
 {#if error}
     <p style="color:red; margin-top:12px;">{error}</p>
 {/if}
+
+<style>
+    .actions {
+        margin-top: 24px;
+        display: flex;
+        gap: 12px;
+        justify-content: flex-start;
+    }
+
+    button {
+        font-size: 14px;
+        padding: 10px 16px;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.15s ease, transform 0.05s ease;
+    }
+
+    button:active {
+        transform: translateY(1px);
+    }
+
+    .primary {
+        background-color: #2563eb;
+        color: white;
+    }
+
+    .primary:hover {
+        background-color: #1d4ed8;
+    }
+</style>
