@@ -87,6 +87,7 @@ export interface NextQuestionResponse {
     question: string | null;
     remaining: number;
     status: InterviewStatus;
+    keywords: string[];
 }
 
 export interface AnswerRequest {

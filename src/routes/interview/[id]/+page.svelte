@@ -3,7 +3,9 @@
     import { goto } from '$app/navigation';
     import { nextQuestion, answerQuestion } from '$lib/api/interview';
     import type { NextQuestionResponse } from '$lib/api/types';
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
+    import { interviewer } from "$lib/voice/interviewer"
+    import { browser } from '$app/environment';
 
     const interviewIdParm = page.params.id;
 
@@ -22,6 +24,11 @@
     let totalQuestions: number | null = null;
     let redirecting = false;
     let completed = false;
+    let questionTextVisible = true;
+    let keywordHintVisible = false;
+    let lastSpokenQuestionId: string | null = null;
+    let voiceRetryAvailable = false;
+    let lastQuestionTextSpoken = '';
 
     function sleep(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -106,9 +113,77 @@
         
     }
 
+
+
+
+    
+
+    function retrySpeakQuestion(): void {
+        if (!browser) return;
+        const text = lastQuestionTextSpoken.trim();
+        if (!text) return;
+
+        interviewer.speak(text).then((result) => {
+        if (result.ok) {
+            keywordHintVisible = true;
+            voiceRetryAvailable = false;
+        }
+        });
+    }
+
+    $: if (!browser) {
+        // During SSR: always show text (voice cannot run server-side)
+        questionTextVisible = true;
+        keywordHintVisible = true;
+    } else if (nextQ?.status !== 'in_progress') {
+        // Leaving interview mode: reset guard so next in_progress can speak
+        lastSpokenQuestionId = null;
+    } else if (
+        nextQ?.status === 'in_progress' &&
+        nextQ.question_id &&
+        nextQ.question_id !== lastSpokenQuestionId
+    ) {
+        // New question in browser: speak once
+        lastSpokenQuestionId = nextQ.question_id;
+
+        questionTextVisible = false;
+        keywordHintVisible = false;
+        voiceRetryAvailable = false;
+
+        const textToSpeak = (nextQ.question ?? '').trim();
+        lastQuestionTextSpoken = textToSpeak;
+        console.log('[voice] question_id=', nextQ.question_id, 'len=', textToSpeak.length);
+
+    if (!textToSpeak) {
+        // Fallback: nothing to speak, reveal immediately
+        console.log('[voice] fallback: empty text');
+        questionTextVisible = true;
+        keywordHintVisible = false;
+    } else {
+        interviewer.speak(textToSpeak).then((result) => {
+            console.log('[voice] speak result=', result);
+            if (result.ok) {
+                // ✅ Voice succeeded → keywords only
+                keywordHintVisible = true;
+                // IMPORTANT: do NOT set questionTextVisible=true here
+            } else if(result.reason === "not-allowed"){
+                voiceRetryAvailable = true;
+                questionTextVisible = false;
+            } else {
+                // ⚠️ Voice failed → text fallback
+                questionTextVisible = true;
+            }
+        });
+    }
+}   
+    onDestroy(() =>{
+        interviewer.cancel();
+    })
+
     // make the function call immediately when the page is created.
     onMount(() =>{
         loadNextQuestion();
+        lastSpokenQuestionId = null;
     })
 </script>
 
@@ -125,7 +200,15 @@
 {:else if nextQ?.status === 'in_progress'}
     <p><strong>Progress:</strong>Question {currentQuestion}/{totalQuestions}</p>
     <p><strong>Type:</strong>{nextQ.type}</p>
-    <p><strong>Question:</strong>{nextQ.question}</p>
+
+    {#if questionTextVisible}
+        <p><strong>Question:</strong>{nextQ.question}</p>
+    {/if}
+
+    {#if keywordHintVisible && nextQ.keywords?.length}
+        <p><strong>Keyword hint:</strong> {nextQ.keywords.join(', ')}</p>
+    {/if}
+
 
     <textarea
         rows="8"
@@ -143,6 +226,13 @@
                 Submit answer
             {/if}
         </button>
+
+        {#if voiceRetryAvailable}
+            <button type="button" class="secondary" on:click={retrySpeakQuestion}>
+                Play question (audio)
+            </button>
+        {/if}
+
     </div>
 {:else}
     <p>Nothing to display.</p>
