@@ -6,9 +6,10 @@
     import { onMount, onDestroy } from 'svelte';
     import { interviewer } from "$lib/voice/interviewer"
     import { browser } from '$app/environment';
-
+	
     const INTERVIEW_ID_PARM = page.params.id;
     const MAX_REPEATS_PER_QUESTION = 2;
+    const POST_SPEECH_PAUSE_MS = 3000;
 
     if (!INTERVIEW_ID_PARM) {
         throw new Error('Interview ID is missing from route parameters.');
@@ -31,6 +32,8 @@
     let activeSpeechToken = 0;
     let isInterviewerSpeaking = false;
     let repeatCountForCurrentQuestion = 0;
+    let postSpeechCueVisible = false;
+
 
     function sleep(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,13 +175,20 @@
             return;
         }
 
-        interviewer.speak(trimmed).then((result) => {
+        interviewer.speak(trimmed).then(async (result) => {
             // Ignore results from older speech attempts
             if (token !== activeSpeechToken) return;
 
             isInterviewerSpeaking = false;
 
             if (result.ok) {
+                postSpeechCueVisible = true;
+                await sleep(POST_SPEECH_PAUSE_MS);
+
+                if (token !== activeSpeechToken) return;
+
+                postSpeechCueVisible = false;
+
                 // Voice succeeded => show keywords only
                 keywordHintVisible = true;
                 questionTextVisible = false;
@@ -269,9 +279,15 @@
         <p><strong>Question:</strong>{nextQ.question}</p>
     {/if}
 
+    {#if postSpeechCueVisible}
+        <p class="interviewer-cue">Take a moment to think.</p>
+    {/if}
+
     {#if keywordHintVisible && nextQ.keywords?.length}
         <p><strong>Keyword hint:</strong> {nextQ.keywords.join(', ')}</p>
     {/if}
+
+
 
 
     <textarea
