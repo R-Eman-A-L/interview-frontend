@@ -7,13 +7,14 @@
     import { interviewer } from "$lib/voice/interviewer"
     import { browser } from '$app/environment';
 
-    const interviewIdParm = page.params.id;
+    const INTERVIEW_ID_PARM = page.params.id;
+    const MAX_REPEATS_PER_QUESTION = 2;
 
-    if (!interviewIdParm) {
+    if (!INTERVIEW_ID_PARM) {
         throw new Error('Interview ID is missing from route parameters.');
     }
 
-    const interviewId: string = interviewIdParm;
+    const INTERVIEW_ID: string = INTERVIEW_ID_PARM;
 
     let loading = false;
     let error: string | null = null;
@@ -27,14 +28,15 @@
     let questionTextVisible = true;
     let keywordHintVisible = false;
     let lastSpokenQuestionId: string | null = null;
-    let voiceRetryAvailable = false;
-    let lastQuestionTextSpoken = '';
+    let activeSpeechToken = 0;
+    let isInterviewerSpeaking = false;
+    let repeatCountForCurrentQuestion = 0;
 
     function sleep(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    async function loadNextQuestion(showLoading: boolean = true) {
+    async function loadNextQuestion(): Promise<void> {
 
         if (redirecting) return;
 
@@ -42,7 +44,7 @@
         loading = true;
         
         try {
-            nextQ = await nextQuestion({interview_id: interviewId});
+            nextQ = await nextQuestion({interview_id: INTERVIEW_ID});
 
             if (nextQ.status === 'completed') {
                 redirecting = true;
@@ -50,7 +52,7 @@
                 currentQuestion = null;
                 totalQuestions = null;
                 await sleep(5000);
-                await goto(`/interview/${interviewId}/results`);
+                await goto(`/interview/${INTERVIEW_ID}/results`);
                 return;
             }
 
@@ -77,7 +79,7 @@
         }
     }
 
-    async function onSubmitAnswer() {
+    async function onSubmitAnswer(): Promise<void> {
         if( !nextQ || nextQ.status !== 'in_progress') return;
 
         const questionId = nextQ.question_id;
@@ -98,7 +100,7 @@
 
         try {
             await answerQuestion({
-                interview_id: interviewId,
+                interview_id: INTERVIEW_ID,
                 question_id: questionId,
                 answer_text: trimmedAnswered
             });
@@ -113,69 +115,133 @@
         
     }
 
-
-
-
-    
-
-    function retrySpeakQuestion(): void {
-        if (!browser) return;
-        const text = lastQuestionTextSpoken.trim();
-        if (!text) return;
-
-        interviewer.speak(text).then((result) => {
-        if (result.ok) {
-            keywordHintVisible = true;
-            voiceRetryAvailable = false;
+    function playQuestionAudio(text: string): void {
+        const trimmed = text.trim();
+        if (!trimmed) {
+            questionTextVisible = true;
+            keywordHintVisible = false;
+            isInterviewerSpeaking = false;
+            return;
         }
-        });
-    }
 
-    $: if (!browser) {
-        // During SSR: always show text (voice cannot run server-side)
-        questionTextVisible = true;
-        keywordHintVisible = true;
-    } else if (nextQ?.status !== 'in_progress') {
-        // Leaving interview mode: reset guard so next in_progress can speak
-        lastSpokenQuestionId = null;
-    } else if (
-        nextQ?.status === 'in_progress' &&
-        nextQ.question_id &&
-        nextQ.question_id !== lastSpokenQuestionId
-    ) {
-        // New question in browser: speak once
-        lastSpokenQuestionId = nextQ.question_id;
+        // New "speech attempt" token
+        const token = ++activeSpeechToken;
 
+        // Voice-first reset for THIS attempt
         questionTextVisible = false;
         keywordHintVisible = false;
-        voiceRetryAvailable = false;
+        isInterviewerSpeaking = true;
 
-        const textToSpeak = (nextQ.question ?? '').trim();
-        lastQuestionTextSpoken = textToSpeak;
-        console.log('[voice] question_id=', nextQ.question_id, 'len=', textToSpeak.length);
+        interviewer.cancel();
 
-    if (!textToSpeak) {
-        // Fallback: nothing to speak, reveal immediately
-        console.log('[voice] fallback: empty text');
-        questionTextVisible = true;
-        keywordHintVisible = false;
-    } else {
-        interviewer.speak(textToSpeak).then((result) => {
-            console.log('[voice] speak result=', result);
+        interviewer.speak(trimmed).then((result) => {
+            // Ignore results from older speech attempts (race fix)
+            if (token !== activeSpeechToken) return;
+
+            isInterviewerSpeaking = false;
+
             if (result.ok) {
-                // ✅ Voice succeeded → keywords only
                 keywordHintVisible = true;
-                // IMPORTANT: do NOT set questionTextVisible=true here
-            } else if(result.reason === "not-allowed"){
-                voiceRetryAvailable = true;
-                questionTextVisible = false;
+            } else if (result.reason === 'not-allowed') {
+                // keep voice-first; user can click Repeat once speaking isn't active
             } else {
-                // ⚠️ Voice failed → text fallback
                 questionTextVisible = true;
+                keywordHintVisible = false;
             }
         });
     }
-}   
+
+    function speakQuestionOrFallback(questionId: string, questionText: string): void {
+        const trimmed = questionText.trim();
+
+        // New "speech attempt" token (race fix)
+        const token = ++activeSpeechToken;
+
+        // Voice-first reset for THIS attempt
+        questionTextVisible = false;
+        keywordHintVisible = false;
+        isInterviewerSpeaking = true;
+
+        interviewer.cancel();
+
+        if (!trimmed) {
+            // No text to speak => immediate text fallback
+            isInterviewerSpeaking = false;
+            questionTextVisible = true;
+            keywordHintVisible = false;
+            return;
+        }
+
+        interviewer.speak(trimmed).then((result) => {
+            // Ignore results from older speech attempts
+            if (token !== activeSpeechToken) return;
+
+            isInterviewerSpeaking = false;
+
+            if (result.ok) {
+                // Voice succeeded => show keywords only
+                keywordHintVisible = true;
+                questionTextVisible = false;
+                return;
+            }
+
+            if (result.reason === 'not-allowed') {
+                // Autoplay blocked by browser.
+                // If user already used all repeats, we must NOT leave them stuck with hidden UI.
+                if (repeatCountForCurrentQuestion >= MAX_REPEATS_PER_QUESTION) {
+                    keywordHintVisible = true;   // show hint so they can proceed
+                    questionTextVisible = false; // keep voice-first feel
+                }
+                return;
+            }
+
+            // Other failure => text fallback
+            questionTextVisible = true;
+            keywordHintVisible = false;
+        });
+    }
+
+    function repeatStorageKey( interviewId: string, questionId: string): string {
+        return `repeatCount:${interviewId}:${questionId}`;
+    }
+
+    function loadRepeatCountFromSession(interviewId: string, questionId: string): number {
+        if(!browser) return 0;
+        const raw = sessionStorage.getItem(repeatStorageKey(interviewId, questionId));
+        const n = raw ? Number(raw) : 0;
+        return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+    }
+
+    function saveRepeatCountToSession(interviewId: string, questionId: string, count: number): void {
+        if(!browser) return;
+        sessionStorage.setItem(repeatStorageKey(interviewId, questionId), String(count));
+    }
+
+    function repeatQuestion(): void {
+        if(isInterviewerSpeaking) return;
+        if(repeatCountForCurrentQuestion >= MAX_REPEATS_PER_QUESTION) return;
+
+        const questionId = nextQ?.question_id;
+        const questionText = nextQ?.question ?? '';
+        if(!questionId) return;
+
+        const nextCount = repeatCountForCurrentQuestion + 1;
+        repeatCountForCurrentQuestion = nextCount;
+        saveRepeatCountToSession(INTERVIEW_ID, questionId, nextCount);
+
+        speakQuestionOrFallback(questionId, questionText);
+    }
+
+    $: if (browser && nextQ?.status === 'in_progress' && nextQ.question_id && nextQ.question_id !== lastSpokenQuestionId) {
+        const newQuestionId = nextQ.question_id;
+
+        repeatCountForCurrentQuestion = loadRepeatCountFromSession(INTERVIEW_ID, newQuestionId);
+
+        lastSpokenQuestionId = newQuestionId;
+
+        speakQuestionOrFallback(newQuestionId, nextQ.question ?? '');
+    }
+
     onDestroy(() =>{
         interviewer.cancel();
     })
@@ -195,8 +261,6 @@
     <p>Loading next question...</p>
 {:else if error}
     <p style="color:red;">{error}</p>
-<!-- {:else if nextQ?.status === 'completed'}
-    <p>Interview completed. Redirecting you to the results page...</p> -->
 {:else if nextQ?.status === 'in_progress'}
     <p><strong>Progress:</strong>Question {currentQuestion}/{totalQuestions}</p>
     <p><strong>Type:</strong>{nextQ.type}</p>
@@ -227,11 +291,13 @@
             {/if}
         </button>
 
-        {#if voiceRetryAvailable}
-            <button type="button" class="secondary" on:click={retrySpeakQuestion}>
-                Play question (audio)
-            </button>
-        {/if}
+        <button 
+        type="button" 
+        class="secondary" 
+        on:click={repeatQuestion} 
+        disabled={isInterviewerSpeaking || repeatCountForCurrentQuestion >= MAX_REPEATS_PER_QUESTION}>
+            Repeat question ({repeatCountForCurrentQuestion}/{MAX_REPEATS_PER_QUESTION})
+        </button>
 
     </div>
 {:else}
