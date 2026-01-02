@@ -275,6 +275,22 @@
     <p><strong>Progress:</strong>Question {currentQuestion}/{totalQuestions}</p>
     <p><strong>Type:</strong>{nextQ.type}</p>
 
+
+    {#if isInterviewerSpeaking}
+  <div class="speaking-wrapper">
+    <div class="speaking-indicator" aria-label="Interviewer speaking">
+      <span class="bars" aria-hidden="true">
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+      </span>
+      <span class="speaking-text">Interviewer speaking…</span>
+    </div>
+  </div>
+{/if}
+
     {#if questionTextVisible}
         <p><strong>Question:</strong>{nextQ.question}</p>
     {/if}
@@ -287,19 +303,19 @@
         <p><strong>Keyword hint:</strong> {nextQ.keywords.join(', ')}</p>
     {/if}
 
-
+    
 
 
     <textarea
         rows="8"
         placeholder="Type your answer here..."
         bind:value={answeredText}
-        disabled={submitting}
+        disabled={submitting || isInterviewerSpeaking}
         style="width:100%; max-width:800px;"
     ></textarea>
 
     <div class="actions">
-        <button class="primary" on:click={onSubmitAnswer} disabled={submitting}>
+        <button class="primary" on:click={onSubmitAnswer} disabled={submitting || isInterviewerSpeaking}>
             {#if submitting}
                 Submitting your answer...
             {:else}
@@ -350,4 +366,44 @@
     .primary:hover {
         background-color: #1d4ed8;
     }
+
+    .speaking-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+    user-select: none;
+  }
+
+  .speaking-text {
+    font-size: 0.95rem;
+    opacity: 0.8;
+  }
+
+  .bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 18px;
+  }
+
+  .bar {
+    width: 3px;
+    height: 6px;
+    border-radius: 2px;
+    background: currentColor;
+    opacity: 0.6;
+    animation: wave 900ms ease-in-out infinite;
+  }
+
+  .bar:nth-child(1) { animation-delay: 0ms; }
+  .bar:nth-child(2) { animation-delay: 120ms; }
+  .bar:nth-child(3) { animation-delay: 240ms; }
+  .bar:nth-child(4) { animation-delay: 360ms; }
+  .bar:nth-child(5) { animation-delay: 480ms; }
+
+  @keyframes wave {
+    0%, 100% { height: 6px; opacity: 0.4; }
+    50% { height: 18px; opacity: 0.9; }
+  }
 </style>
