@@ -9,8 +9,26 @@
 	import { asnwerRecorder } from '$lib/voice/answerRecorder';
 
 	const INTERVIEW_ID_PARM = page.params.id;
-	const MAX_REPEATS_PER_QUESTION = 2;
 	const POST_SPEECH_PAUSE_MS = 3000;
+	const DIFFICULTY_MODE = page.url.searchParams.get('mode') === 'hard' ? 'hard' : 'chill';
+	const DIFFICULTY_PRESETS = {
+		chill: {
+			answerSeconds: 120,
+			silenceNudgeSeconds: 20,
+			maxRepeats: 2,
+			cue30: true,
+			cue10: true
+		},
+		hard: {
+			answerSeconds: 60,
+			silenceNudgeSeconds: 10,
+			maxRepeats: 1,
+			cue30: true,
+			cue10: true
+		}
+	} as const;
+
+	const PRESET = DIFFICULTY_PRESETS[DIFFICULTY_MODE];
 
 	if (!INTERVIEW_ID_PARM) {
 		throw new Error('Interview ID is missing from route parameters.');
@@ -40,10 +58,29 @@
 	let voiceRecoding = false;
 	let voiceError: string | null = null;
 	let voiceStatus: string | null = null;
-	let voiceSeconds = 0;
 	let voiceElapsedMs = 0;
 	let voiceStartTs = 0;
 	let voiceTimer: ReturnType<typeof setInterval> | null = null;
+
+	let answerTimeLeftMs = PRESET.answerSeconds * 1000;
+	let answerTimer: ReturnType<typeof setInterval> | null = null;
+	let pressureCue: string | null = null;
+	let answerDeadlineEpochMs: number | null = null;
+	let answerPauseStartedEpochMs: number | null = null;
+
+	let cue30Fired = false;
+	let cue10Fired = false;
+	let cue0Fired = false;
+	let answerTimerRunning = false;
+	let answerWindowStarted = false;
+
+	let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+	let silenceEscalationTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastCandidateActivityEpochMs = Date.now();
+	let lastAnsweredTextSnapshot = answeredText;
+	let silenceNudge1Fired = false;
+	let silenceNudge2Fired = false;
+	let interviewerSpeechStartedEpochMs: number | null = null;
 
 	function sleep(ms: number): Promise<void> {
 		return new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,42 +163,6 @@
 		}
 	}
 
-	function playQuestionAudio(text: string): void {
-		const trimmed = text.trim();
-		if (!trimmed) {
-			questionTextVisible = true;
-			keywordHintVisible = false;
-			isInterviewerSpeaking = false;
-			return;
-		}
-
-		// New "speech attempt" token
-		const token = ++activeSpeechToken;
-
-		// Voice-first reset for THIS attempt
-		questionTextVisible = false;
-		keywordHintVisible = false;
-		isInterviewerSpeaking = true;
-
-		interviewer.cancel();
-
-		interviewer.speak(trimmed).then((result) => {
-			// Ignore results from older speech attempts (race fix)
-			if (token !== activeSpeechToken) return;
-
-			isInterviewerSpeaking = false;
-
-			if (result.ok) {
-				keywordHintVisible = true;
-			} else if (result.reason === 'not-allowed') {
-				// keep voice-first; user can click Repeat once speaking isn't active
-			} else {
-				questionTextVisible = true;
-				keywordHintVisible = false;
-			}
-		});
-	}
-
 	function speakQuestionOrFallback(questionId: string, questionText: string): void {
 		const trimmed = questionText.trim();
 
@@ -173,13 +174,36 @@
 		keywordHintVisible = false;
 		isInterviewerSpeaking = true;
 
+		interviewerSpeechStartedEpochMs = Date.now();
+
+		clearSilenceTimers();
+
+		stopAnswerTimer();
+		//pressureCue = null;
+		if (answerWindowStarted) {
+			answerPauseStartedEpochMs = Date.now();
+		} else {
+			answerPauseStartedEpochMs = null;
+		}
+
 		interviewer.cancel();
 
 		if (!trimmed) {
 			// No text to speak => immediate text fallback
 			isInterviewerSpeaking = false;
+
+			interviewerSpeechStartedEpochMs = null;
+
 			questionTextVisible = true;
 			keywordHintVisible = false;
+
+			beginAnswerWindow(questionId);
+
+			if (!answerWindowStarted) {
+				lastCandidateActivityEpochMs = Date.now();
+			}
+			scheduleSilenceNudges(questionId);
+
 			return;
 		}
 
@@ -189,6 +213,23 @@
 
 			isInterviewerSpeaking = false;
 
+			if (interviewerSpeechStartedEpochMs) {
+				const spokeForMs = Date.now() - interviewerSpeechStartedEpochMs;
+				lastCandidateActivityEpochMs += spokeForMs; // shift forward so silence duration excludes speech time
+				interviewerSpeechStartedEpochMs = null;
+			}
+
+			// ✅ Resume candidate clock (extend deadline by how long interviewer spoke)
+			if (answerWindowStarted && answerPauseStartedEpochMs && answerDeadlineEpochMs && questionId) {
+				const pausedFor = Date.now() - answerPauseStartedEpochMs;
+				answerDeadlineEpochMs += pausedFor;
+				saveDeadline(INTERVIEW_ID, questionId, answerDeadlineEpochMs);
+			}
+			answerPauseStartedEpochMs = null;
+
+			// ✅ Start the answer window only when interviewer finishes speaking
+			beginAnswerWindow(questionId);
+
 			if (result.ok) {
 				postSpeechCueVisible = true;
 				await sleep(POST_SPEECH_PAUSE_MS);
@@ -196,6 +237,11 @@
 				if (token !== activeSpeechToken) return;
 
 				postSpeechCueVisible = false;
+
+				if (!answerWindowStarted) {
+					lastCandidateActivityEpochMs = Date.now();
+				}
+				scheduleSilenceNudges(questionId);
 
 				// Voice succeeded => show keywords only
 				keywordHintVisible = true;
@@ -206,9 +252,14 @@
 			if (result.reason === 'not-allowed') {
 				// Autoplay blocked by browser.
 				// If user already used all repeats, we must NOT leave them stuck with hidden UI.
-				if (repeatCountForCurrentQuestion >= MAX_REPEATS_PER_QUESTION) {
+				if (repeatCountForCurrentQuestion >= PRESET.maxRepeats) {
 					keywordHintVisible = true; // show hint so they can proceed
 					questionTextVisible = false; // keep voice-first feel
+
+					beginAnswerWindow(questionId);
+
+					lastCandidateActivityEpochMs = Date.now();
+					scheduleSilenceNudges(questionId);
 				}
 				return;
 			}
@@ -216,6 +267,10 @@
 			// Other failure => text fallback
 			questionTextVisible = true;
 			keywordHintVisible = false;
+
+			beginAnswerWindow(questionId);
+			lastCandidateActivityEpochMs = Date.now();
+			scheduleSilenceNudges(questionId);
 		});
 	}
 
@@ -237,7 +292,7 @@
 
 	function repeatQuestion(): void {
 		if (isInterviewerSpeaking) return;
-		if (repeatCountForCurrentQuestion >= MAX_REPEATS_PER_QUESTION) return;
+		if (repeatCountForCurrentQuestion >= PRESET.maxRepeats) return;
 
 		const questionId = nextQ?.question_id;
 		const questionText = nextQ?.question ?? '';
@@ -303,6 +358,8 @@
 
 		voiceRecoding = true;
 		startVoiceTimer();
+
+		markCandidateActivity();
 	}
 
 	async function stopVoiceAnswer(): Promise<void> {
@@ -327,6 +384,270 @@
 		} else {
 			voiceStatus = 'No speech detected. You can try again or type your answer.';
 		}
+
+		markCandidateActivity();
+	}
+
+	function deadlineStorageKey(interviewId: string, questionId: string): string {
+		return `answerDeadline:${interviewId}:${questionId}`;
+	}
+
+	function loadDealine(interviewId: string, questionId: string): number | null {
+		const raw = sessionStorage.getItem(deadlineStorageKey(interviewId, questionId));
+		if (!raw) return null;
+		const num = Number(raw);
+		return Number.isFinite(num) ? num : null;
+	}
+
+	function saveDeadline(interviewId: string, questionId: string, deadlineEpochMs: number): void {
+		sessionStorage.setItem(deadlineStorageKey(interviewId, questionId), String(deadlineEpochMs));
+	}
+
+	function formatCountdown(ms: number): string {
+		const clamped = Math.max(0, ms);
+		const totalSeconds = Math.ceil(clamped / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+	}
+
+	function stopAnswerTimer() {
+		if (answerTimer) {
+			clearInterval(answerTimer);
+			answerTimer = null;
+		}
+		answerTimerRunning = false;
+	}
+
+	function beginAnswerWindow(questionId: string): void {
+		const existing = loadDealine(INTERVIEW_ID, questionId);
+
+		if (!existing) {
+			answerDeadlineEpochMs = Date.now() + PRESET.answerSeconds * 1000;
+			saveDeadline(INTERVIEW_ID, questionId, answerDeadlineEpochMs);
+		} else {
+			answerDeadlineEpochMs = existing;
+		}
+
+		answerWindowStarted = true;
+
+		answerTimeLeftMs = Math.max(0, answerDeadlineEpochMs - Date.now());
+
+		const secondsLeft = Math.ceil(answerTimeLeftMs / 1000);
+
+		// Recompute fired flags from current remaining time
+		cue30Fired = secondsLeft <= 30;
+		cue10Fired = secondsLeft <= 10;
+		cue0Fired = secondsLeft <= 0;
+
+		// ✅ Key fix: if we refreshed mid-countdown, show the correct timer cue immediately
+		hydrateTimerCueIfNeeded(questionId, secondsLeft);
+
+		stopAnswerTimer();
+		answerTimer = setInterval(() => {
+			if (!answerDeadlineEpochMs) return;
+
+			const now = Date.now();
+			const msLeft = Math.max(0, answerDeadlineEpochMs - now);
+			const secLeft = Math.ceil(msLeft / 1000);
+
+			answerTimeLeftMs = msLeft;
+
+			// Crossing thresholds (normal flow)
+			if (PRESET.cue30 && !cue30Fired && secLeft <= 30) {
+				cue30Fired = true;
+				setPressureCue(questionId, '30 seconds remaining.');
+				return;
+			}
+
+			if (PRESET.cue10 && !cue10Fired && secLeft <= 10) {
+				cue10Fired = true;
+				setPressureCue(questionId, '10 seconds remaining.');
+				return;
+			}
+
+			if (!cue0Fired && secLeft <= 0) {
+				cue0Fired = true;
+				setPressureCue(questionId, 'Time is up — submit your answer when ready.');
+				return;
+			}
+
+			// Persist flags occasionally (cheap) so refresh keeps the right state
+			// (only needed if you care about restoring "already fired" without re-hydrate)
+			savePressureState(INTERVIEW_ID, questionId);
+		}, 200);
+
+		answerTimerRunning = true;
+	}
+
+	function clearSilenceTimers(): void {
+		if (silenceTimer) {
+			clearTimeout(silenceTimer);
+			silenceTimer = null;
+		}
+
+		if (silenceEscalationTimer) {
+			clearTimeout(silenceEscalationTimer);
+			silenceEscalationTimer = null;
+		}
+	}
+
+	function markCandidateActivity(): void {
+		lastCandidateActivityEpochMs = Date.now();
+
+		// Candidate engaged → restart silence ladder for future silence
+		silenceNudge1Fired = false;
+		silenceNudge2Fired = false;
+
+		clearSilenceTimers();
+
+		const qid = nextQ?.question_id;
+		if (qid) {
+			savePressureState(INTERVIEW_ID, qid);
+			scheduleSilenceNudges(qid);
+		}
+	}
+
+	function scheduleSilenceNudges(questionId: string): void {
+		if (isInterviewerSpeaking || submitting || completed) return;
+		if (!answerWindowStarted) return;
+
+		// If time is up, do NOT show silence nudges (timer cue owns the pressure)
+		if (answerTimeLeftMs <= 0) return;
+
+		clearSilenceTimers();
+
+		const firstDelayMs = PRESET.silenceNudgeSeconds * 1000;
+		const silentForMs = Date.now() - lastCandidateActivityEpochMs;
+
+		// If both nudges already happened, don't replay them after refresh/repeat
+		if (silenceNudge1Fired && silenceNudge2Fired) return;
+
+		// ---- Nudge #1 ----
+		if (!silenceNudge1Fired) {
+			const delayMs = Math.max(0, firstDelayMs - silentForMs);
+
+			silenceTimer = setTimeout(() => {
+				if (isInterviewerSpeaking || submitting || completed) return;
+				if (answerTimeLeftMs <= 0) return;
+
+				const silentNowMs = Date.now() - lastCandidateActivityEpochMs;
+				if (silentNowMs < firstDelayMs) return;
+
+				silenceNudge1Fired = true;
+				setPressureCue(questionId, "Take your time - start when you're ready.");
+
+				// schedule next stage
+				scheduleSilenceNudges(questionId);
+			}, delayMs);
+
+			return;
+		}
+
+		// ---- Nudge #2 ----
+		if (!silenceNudge2Fired) {
+			const secondThresholdMs = firstDelayMs + 10_000;
+			const delayMs = Math.max(0, secondThresholdMs - silentForMs);
+
+			silenceEscalationTimer = setTimeout(() => {
+				if (isInterviewerSpeaking || submitting || completed) return;
+				if (answerTimeLeftMs <= 0) return;
+
+				const silentNowMs = Date.now() - lastCandidateActivityEpochMs;
+				if (silentNowMs < secondThresholdMs) return;
+
+				silenceNudge2Fired = true;
+				setPressureCue(questionId, "I'll need an answer when you're ready.");
+			}, delayMs);
+		}
+	}
+
+	function pressureStateStorageKey(interviewId: string, questionId: string): string {
+		return `pressureState:${interviewId}:${questionId}`;
+	}
+
+	type PressureState = {
+		pressureCue: string | null;
+		cue30Fired: boolean;
+		cue10Fired: boolean;
+		cue0Fired: boolean;
+		silenceNudge1Fired: boolean;
+		silenceNudge2Fired: boolean;
+		lastCandidateActivityEpochMs: number;
+	};
+
+	function loadPressureState(interviewId: string, questionId: string): PressureState | null {
+		if (!browser) return null;
+
+		const raw = sessionStorage.getItem(pressureStateStorageKey(interviewId, questionId));
+		if (!raw) return null;
+
+		try {
+			const obj = JSON.parse(raw) as Partial<PressureState>;
+
+			// minimal validation + defaults
+			return {
+				pressureCue:
+					typeof obj.pressureCue === 'string' || obj.pressureCue === null ? obj.pressureCue : null,
+				cue30Fired: !!obj.cue30Fired,
+				cue10Fired: !!obj.cue10Fired,
+				cue0Fired: !!obj.cue0Fired,
+				silenceNudge1Fired: !!obj.silenceNudge1Fired,
+				silenceNudge2Fired: !!obj.silenceNudge2Fired,
+				lastCandidateActivityEpochMs:
+					typeof obj.lastCandidateActivityEpochMs === 'number' &&
+					Number.isFinite(obj.lastCandidateActivityEpochMs)
+						? obj.lastCandidateActivityEpochMs
+						: Date.now()
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function savePressureState(interviewId: string, questionId: string): void {
+		if (!browser) return;
+
+		const state: PressureState = {
+			pressureCue,
+			cue30Fired,
+			cue10Fired,
+			cue0Fired,
+			silenceNudge1Fired,
+			silenceNudge2Fired,
+			lastCandidateActivityEpochMs
+		};
+
+		sessionStorage.setItem(pressureStateStorageKey(interviewId, questionId), JSON.stringify(state));
+	}
+
+	function setPressureCue(questionId: string, cue: string | null): void {
+		pressureCue = cue;
+		savePressureState(INTERVIEW_ID, questionId);
+	}
+
+	function hydrateTimerCueIfNeeded(questionId: string, secLeft: number): void {
+		// If time is up, always force the time-up cue
+		if (secLeft <= 0) {
+			setPressureCue(questionId, 'Time is up — submit your answer when ready.');
+			return;
+		}
+
+		// If already within 10s and we don't already show time-up, upgrade to 10s
+		if (PRESET.cue10 && secLeft <= 10) {
+			// Only upgrade if nothing is showing or we're still showing 30s
+			if (!pressureCue || pressureCue === '30 seconds remaining.') {
+				setPressureCue(questionId, '10 seconds remaining.');
+			}
+			return;
+		}
+
+		// If already within 30s and nothing is showing yet, show 30s
+		if (PRESET.cue30 && secLeft <= 30) {
+			if (!pressureCue) {
+				setPressureCue(questionId, '30 seconds remaining.');
+			}
+		}
 	}
 
 	$: if (
@@ -339,9 +660,51 @@
 
 		repeatCountForCurrentQuestion = loadRepeatCountFromSession(INTERVIEW_ID, newQuestionId);
 
+		// Reset runtime stuff for a new question
+		answerWindowStarted = false;
+		answerDeadlineEpochMs = null;
+		answerPauseStartedEpochMs = null;
+
+		stopAnswerTimer();
+		answerTimerRunning = false;
+
+		clearSilenceTimers();
+		answerTimeLeftMs = PRESET.answerSeconds * 1000;
+
+		// ✅ Restore pressure state if it exists (refresh-proof)
+		const restored = loadPressureState(INTERVIEW_ID, newQuestionId);
+		if (restored) {
+			pressureCue = restored.pressureCue;
+			cue30Fired = restored.cue30Fired;
+			cue10Fired = restored.cue10Fired;
+			cue0Fired = restored.cue0Fired;
+			silenceNudge1Fired = restored.silenceNudge1Fired;
+			silenceNudge2Fired = restored.silenceNudge2Fired;
+			lastCandidateActivityEpochMs = restored.lastCandidateActivityEpochMs;
+		} else {
+			pressureCue = null;
+			cue30Fired = false;
+			cue10Fired = false;
+			cue0Fired = false;
+			silenceNudge1Fired = false;
+			silenceNudge2Fired = false;
+			lastCandidateActivityEpochMs = Date.now();
+		}
+
 		lastSpokenQuestionId = newQuestionId;
 
 		speakQuestionOrFallback(newQuestionId, nextQ.question ?? '');
+	}
+
+	$: if (browser && answerWindowStarted && !isInterviewerSpeaking && !submitting && !completed) {
+		// Only treat as activity if the text actually changed
+		if (answeredText !== lastAnsweredTextSnapshot) {
+			lastAnsweredTextSnapshot = answeredText;
+			markCandidateActivity();
+		}
+	} else {
+		// Keep snapshot in sync so we don't fire when re-entering the state
+		lastAnsweredTextSnapshot = answeredText;
 	}
 
 	// make the function call immediately when the page is created.
@@ -369,6 +732,8 @@
 			} catch {}
 		}
 		interviewer.cancel();
+		stopAnswerTimer();
+		clearSilenceTimers();
 	});
 </script>
 
@@ -410,6 +775,17 @@
 	{#if keywordHintVisible && nextQ.keywords?.length}
 		<p><strong>Keyword hint:</strong> {nextQ.keywords.join(', ')}</p>
 	{/if}
+
+	<div class="pressure-bar">
+		<div class="pressure-left">
+			<span class="mode-pill">{DIFFICULTY_MODE === 'hard' ? 'Hard mode' : 'Chill mode'}</span>
+			<span class="timer">Time remaining: {formatCountdown(answerTimeLeftMs)}</span>
+		</div>
+
+		{#if pressureCue}
+			<div class="pressure-cue" aria-live="polite">{pressureCue}</div>
+		{/if}
+	</div>
 
 	<textarea
 		rows="8"
@@ -478,9 +854,9 @@
 			type="button"
 			class="secondary"
 			on:click={repeatQuestion}
-			disabled={isInterviewerSpeaking || repeatCountForCurrentQuestion >= MAX_REPEATS_PER_QUESTION}
+			disabled={isInterviewerSpeaking || repeatCountForCurrentQuestion >= PRESET.maxRepeats}
 		>
-			Repeat question ({repeatCountForCurrentQuestion}/{MAX_REPEATS_PER_QUESTION})
+			Repeat question ({repeatCountForCurrentQuestion}/{PRESET.maxRepeats})
 		</button>
 	</div>
 {:else}
@@ -649,5 +1025,41 @@
 			transform: scale(1.35);
 			opacity: 1;
 		}
+	}
+
+	.pressure-bar {
+		margin-top: 12px;
+		display: flex;
+		flex-direction: column; /* ✅ cue drops below */
+		align-items: flex-start; /* ✅ left aligned */
+		gap: 6px;
+		opacity: 0.9;
+	}
+
+	.pressure-left {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.mode-pill {
+		padding: 4px 10px;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.06);
+		font-size: 12px;
+		letter-spacing: 0.02em;
+	}
+
+	.timer {
+		font-variant-numeric: tabular-nums;
+		font-size: 13px;
+		opacity: 0.9;
+	}
+
+	.pressure-cue {
+		font-size: 13px;
+		opacity: 0.9;
 	}
 </style>
